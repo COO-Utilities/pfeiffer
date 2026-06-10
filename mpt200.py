@@ -33,7 +33,7 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         'correction_factor_cold_cathode': "743"
     }
 
-    def __init__(self, log, logfile: str = __name__.rsplit(",", 1)[-1],
+    def __init__(self, log=True, logfile: str = __name__.rsplit(",", 1)[-1],
                  read_timeout: float = 1.0, address: int = 1) -> None:
         """ Constructor """
         super().__init__(log, logfile)
@@ -104,6 +104,8 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         if self.is_connected():
             if item == "pressure":
                 value = pvp.read_pressure(self.serial, self.address)
+            elif item == "error":
+                value = pvp.read_error_code(self.serial, self.address)
             else:
                 value = None
             return value
@@ -120,7 +122,7 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         self.last_error_code = pvp.read_error_code(self.serial, self.address)
         if self.last_error_code != 0:
             self.report_error(f"Error code: {self.last_error_code}")
-        self.gauge_type = pvp.read_gauge_type(self.serial, self.address)
+        # self.gauge_type = pvp.read_gauge_type(self.serial, self.address)
 
         self.initialized = True
         return True
