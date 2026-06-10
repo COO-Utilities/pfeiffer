@@ -203,7 +203,7 @@ def read_pressure(s, addr, valid_char_filter=None):
         raise ValueError("invalid response from gauge")
 
     # Convert to a float
-    mantissa = int(rdata[:4])
+    mantissa = float(rdata[:4]) * 0.001
     exponent = int(rdata[4:])
     return float(mantissa * 10 ** (exponent - 20))
 
