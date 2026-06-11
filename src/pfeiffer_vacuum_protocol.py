@@ -1,9 +1,10 @@
+""" Pfeiffer vacuum_protocol"""
 from enum import Enum
 
 
 class InvalidCharError(Exception):  # Custom exception when failing on invalid chars
+    """ Class for invalid character error """
     pass
-
 
 # Control non-ascii char filtering
 _filter_invalid_char = False
@@ -29,24 +30,28 @@ def disable_valid_char_filter():
 
 # Error states for vacuum gauges
 class ErrorCode(Enum):
+    """Class for Pfeiffer vacuum protocol error codes"""
     NO_ERROR = 1
     DEFECTIVE_TRANSMITTER = 2
     DEFECTIVE_MEMORY = 3
 
 
 def _send_data_request(s, addr, param_num):
+    """ Send a request for data """
     c = "{:03d}00{:03d}02=?".format(addr, param_num)
     c += "{:03d}\r".format(sum([ord(x) for x in c]) % 256)
     s.write(c.encode())
 
 
 def _send_control_command(s, addr, param_num, data_str):
+    """ Send a control command """
     c = "{:03d}10{:03d}{:02d}{:s}".format(addr, param_num, len(data_str), data_str)
     c += "{:03d}\r".format(sum([ord(x) for x in c]) % 256)
     return s.write(c.encode())
 
 
 def _read_gauge_response(s, valid_char_filter=None):
+    """ read the gauge response """
     if valid_char_filter is None:
         valid_char_filter = _filter_invalid_char
 
@@ -63,9 +68,11 @@ def _read_gauge_response(s, valid_char_filter=None):
         except UnicodeDecodeError:
             if valid_char_filter:
                 continue
-            raise InvalidCharError("Cannot decode character. This issue may sometimes be resolved by ignoring invalid "
-                                   "characters. Enable the filter globally by running the function "
-                                   "`pfeiffer_vacuum_protocol.enable_valid_char_filter()` after the import statement.")
+            raise InvalidCharError("Cannot decode character. This issue may sometimes be resolved"
+                                   " by ignoring invalid characters. Enable the filter globally "
+                                   "by running the function "
+                                   "`pfeiffer_vacuum_protocol.enable_valid_char_filter()` "
+                                   "after the import statement.")
 
         if c == b"\r":
             break
@@ -102,7 +109,8 @@ def _read_gauge_response(s, valid_char_filter=None):
 
 def read_error_code(s, addr, valid_char_filter=None):
     """
-    Reads Pfeiffer's low level error code on the gauge.  This appears to be useful for diagnosing failure of the transmitter itself.
+    Reads Pfeiffer's low level error code on the gauge.  This appears to be useful for diagnosing
+     failure of the transmitter itself.
 
     :param s: The open serial object pointing to an adapter attached to the gauge.
     :param addr: The address of the gauge.
@@ -110,7 +118,8 @@ def read_error_code(s, addr, valid_char_filter=None):
     :param valid_char_filter: Manually override the valid character filter.
     :type valid_char_filter: bool/None
 
-    :returns: The error code returned by the gauge, this can be one of `NO_ERROR`, `DEFECTIVE_TRANSMITTER`, or `DEFECTIVE_MEMORY`
+    :returns: The error code returned by the gauge, this can be one of `NO_ERROR`,
+     `DEFECTIVE_TRANSMITTER`, or `DEFECTIVE_MEMORY`
     :rtype: pfeiffer_vacuum_protocol.ErrorCode enum element
     """
     _send_data_request(s, addr, 303)
@@ -185,7 +194,7 @@ def read_gauge_type(s, addr, valid_char_filter=None):
 
 def read_pressure(s, addr, valid_char_filter=None):
     """
-    Reads the pressure from the gauge and returns it in bars.
+    Reads the pressure from the gauge and returns it in hPa.
 
     :param s: The open serial device attached to the gauge.
     :param addr: The address of the gauge.
@@ -210,7 +219,8 @@ def read_pressure(s, addr, valid_char_filter=None):
 
 def write_pressure_setpoint(s, addr, val, valid_char_filter=None):
     """
-    Sets the gauge's "vacuum setpoint".  In the manual, this appears to tell the gauge if it's operating in a high or low pressure regime to change some of its signal processing.
+    Sets the gauge's "vacuum setpoint".  In the manual, this appears to tell the gauge if it's
+     operating in a high or low pressure regime to change some of its signal processing.
 
     :param s: The open serial device attached to the gauge.
     :param addr: The address of the gauge.
@@ -237,7 +247,8 @@ def write_pressure_setpoint(s, addr, val, valid_char_filter=None):
 
 def read_correction_value(s, addr, valid_char_filter=None):
     """
-    Returns the current correction value used to adjust pressure measurements for different gas compositions.
+    Returns the current correction value used to adjust pressure measurements
+     for different gas compositions.
 
     :param s: The open serial device attached to the gauge.
     :param addr: The address of the gauge.
@@ -258,7 +269,8 @@ def read_correction_value(s, addr, valid_char_filter=None):
 
 def write_correction_value(s, addr, val, valid_char_filter=None):
     """
-    Sets the correction value on the gauge.  Used to adjust the pressure measurement for different gas compositions.
+    Sets the correction value on the gauge.  Used to adjust the pressure measurement
+     for different gas compositions.
 
     :param s: The open serial device attached to the gauge.
     :param addr: The address of the gauge.
