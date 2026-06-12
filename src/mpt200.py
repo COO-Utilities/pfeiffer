@@ -16,21 +16,31 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
     This class provides methods to read the MPT200 pressure sensor
 
     """
-    commands = {
-        'on_off': "041",
-        'switching_ranges': "049",
-        'current_error': "303",
-        'software_version': "312",
-        'device_name': "349",
-        'hardware_version': "354",
-        'serial_number': "355",
-        'order_number': "388",
-        'pressure_switch_point1': "730",
-        'pressure_switch_point2': "732",
-        'pressure_value': "740",
-        'pressure_adjustment_point': "741",
-        'correction_factor_pirani': "742",
-        'correction_factor_cold_cathode': "743"
+    # commands that initial control functions
+    control_commands = {
+        'on_off': {'cmd': 41, 'size': 1},
+        'switching_ranges': {'cmd': 49, 'size': 3},
+        'set_pressure_switch_point1': {'cmd': 730, 'size': 6},
+        'set_pressure_switch_point2': {'cmd': 732, 'size': 6},
+        'set_pressure_value': {'cmd': 740, 'size': 6},  # only used for calibration
+        'set_pressure_adjustment_point': {'cmd': 741, 'size': 3},
+        'set_correction_factor_pirani': {'cmd': 742, 'size': 6},
+        'set_correction_factor_cold_cathode': {'cmd': 743, 'size': 6}
+    }
+    # commands that request status or data
+    status_requests = {
+        'current_error': 303,
+        'software_version': 312,
+        'device_name': 349,
+        'hardware_version': 354,
+        'serial_number': 355,
+        'order_number': 388,
+        'pressure_switch_point1': 730,
+        'pressure_switch_point2': 732,
+        'pressure_value': 740,
+        'pressure_adjustment_point': 741,
+        'correction_factor_pirani': 742,
+        'correction_factor_cold_cathode': 743
     }
 
     def __init__(self, log=True, logfile: str = __name__.rsplit(",", 1)[-1],
@@ -90,10 +100,21 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         except serial.SerialException as ex:
             self.report_error(f"Could not disconnect from Pfeiffer MPT200 sensor: {ex}")
 
-    def _send_command(self, command: str) -> bool:  # pylint: disable=W0221
-        """ send a command to the device """
-        self.report_warning(f"_send_command not implemented: {command}")
-        return False
+    def _send_command(self, command: str, data_str:str ="") -> int:  # pylint: disable=W0221
+        """ Send a command to the Pfeiffer MPT200 pressure sensor """
+        if command in self.status_requests:
+            cmd = "{:03d}00{:03d}02=?".format(self.address, self.status_requests[command])
+            cmd += "{:03d}\r".format(sum([ord(x) for x in cmd]) % 256)
+            return self.serial.write(cmd.encode())
+        if command in self.control_commands:
+            if data_str is not None:
+                cmd = "{:03d}10{:03d}{:02d}{:s}".format(self.address,
+                                                        self.control_commands[command],
+                                                        len(data_str), data_str)
+                cmd += "{:03d}\r".format(sum([ord(x) for x in cmd]) % 256)
+                return self.serial.write(cmd.encode())
+            self.report_error("Control commands require data to be sent")
+        return 0
 
     def _read_reply(self) -> Union[str, None]:
         """ read a reply from the device """
