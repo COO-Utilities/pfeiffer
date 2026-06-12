@@ -3,7 +3,6 @@ from typing import Union
 from enum import Enum
 
 import serial
-import pfeiffer_vacuum_protocol as pvp
 
 try:
     from hardware_device_base import HardwareSensorBase
@@ -234,8 +233,8 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         if self.is_connected():
             if item == "pressure":
                 value = self.read_pressure()
-            elif item == "error":
-                value = pvp.read_error_code(self.serial, self.address)
+            # elif item == "error":
+            #    value = self.read_error_code(self.serial, self.address)
             else:
                 value = None
             return value
@@ -249,7 +248,7 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
             return False
 
         self.software_version = self.read_software_version()
-        self.last_error_code = pvp.read_error_code(self.serial, self.address)
+        # self.last_error_code = pvp.read_error_code(self.serial, self.address)
         if self.last_error_code != 0:
             self.report_error(f"Error code: {self.last_error_code}")
         # self.gauge_type = pvp.read_gauge_type(self.serial, self.address)
