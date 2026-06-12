@@ -9,10 +9,6 @@ try:
 except ModuleNotFoundError:
     from hardware_device_base.hardware_sensor_base import HardwareSensorBase  # type: ignore
 
-class InvalidCharError(Exception):  # Custom exception when failing on invalid chars
-    """ Class for invalid character error """
-    pass
-
 # Error states for vacuum gauges
 class ErrorCode(Enum):
     """Class for Pfeiffer vacuum protocol error codes"""
@@ -138,7 +134,7 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         self.report_debug(f"Chars sent: {n_chars}")
         return n_chars > 0
 
-    def _read_reply(self) -> Union[str, None]:
+    def _read_reply(self) -> Union[str, None]: # pylint: disable=too-many-branches
         """ read the gauge response """
 
         # Read until newline or we stop getting a response
