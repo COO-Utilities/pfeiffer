@@ -12,9 +12,9 @@ except ModuleNotFoundError:
 # Error states for vacuum gauges
 class ErrorCode(Enum):
     """Class for Pfeiffer vacuum protocol error codes"""
-    NO_ERROR = 1
-    DEFECTIVE_TRANSMITTER = 2
-    DEFECTIVE_MEMORY = 3
+    NO_ERROR = 0
+    DEFECTIVE_SENSOR = 1
+    DEFECTIVE_MEMORY = 2
 
 
 class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-instance-attributes
@@ -25,19 +25,19 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
     """
     # commands that initial control functions
     control_commands = {
-        'on_off': {'cmd': 41, 'size': 1},
-        'switching_ranges': {'cmd': 49, 'size': 3},
-        'set_pressure_switch_point1': {'cmd': 730, 'size': 6},
-        'set_pressure_switch_point2': {'cmd': 732, 'size': 6},
-        'set_pressure_value': {'cmd': 740, 'size': 6},  # only used for calibration
-        'set_pressure_adjustment_point': {'cmd': 741, 'size': 3},
-        'set_correction_factor_pirani': {'cmd': 742, 'size': 6},
-        'set_correction_factor_cold_cathode': {'cmd': 743, 'size': 6}
+        'on_off': 41,
+        'switching_ranges': 49,
+        'set_pressure_switch_point1': 730,
+        'set_pressure_switch_point2': 732,
+        'set_pressure_value': 740,  # only used for calibration
+        'set_pressure_adjustment_point': 741,
+        'set_correction_factor_pirani': 742,
+        'set_correction_factor_cold_cathode': 743
     }
     # commands that request status or data
     status_requests = {
         'current_error': 303,
-        'software_version': 312,
+        'firmware_version': 312,
         'device_name': 349,
         'hardware_version': 354,
         'serial_number': 355,
@@ -48,6 +48,12 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         'pressure_adjustment_point': 741,
         'correction_factor_pirani': 742,
         'correction_factor_cold_cathode': 743
+    }
+
+    error_codes = {
+        "000000": ErrorCode.NO_ERROR,
+        "Err001": ErrorCode.DEFECTIVE_SENSOR,
+        "Err002": ErrorCode.DEFECTIVE_MEMORY
     }
 
     def __init__(self, log=True, logfile: str = __name__.rsplit(",", 1)[-1],
@@ -118,9 +124,9 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
             n_chars = self.serial.write(cmd.encode())
         elif command in self.control_commands:
             if data_str is not None:
-                self.last_command_num = self.control_commands[command]['cmd']
+                self.last_command_num = self.control_commands[command]
                 cmd = "{:03d}10{:03d}{:02d}{:s}".format(self.address,
-                                                        self.control_commands[command]['cmd'],
+                                                        self.control_commands[command],
                                                         len(data_str), data_str)
                 cmd += "{:03d}\r".format(sum([ord(x) for x in cmd]) % 256)
                 self.report_debug(f"Sending control command: {cmd}")
@@ -198,6 +204,76 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         # Return it
         return data
 
+    def read_current_error(self) -> Union[ErrorCode, None]:
+        """ Read the current error code """
+        if self._send_command("current_error"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                if rdata in self.error_codes:
+                    self.last_error_code = self.error_codes[rdata]
+                    return self.error_codes[rdata]
+
+                self.report_error(f"Unknown error code {rdata}")
+                return None
+
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send error command")
+        return None
+
+    def read_firmware_version(self) -> tuple[int, int, int] | None:
+        """ Read the gauge firmware version """
+        if self._send_command("firmware_version"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return int(rdata[0:2]), int(rdata[2:4]), int(rdata[4:])
+        else:
+            self.report_error("Unable to send firmware version command")
+        return None
+
+    def read_device_name(self) -> Union[str, None]:
+        """ Read the gauge device name """
+        if self._send_command("device_name"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return rdata
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send device name command")
+        return None
+
+    def read_hardware_version(self) -> tuple[int, int, int] | None:
+        """ Read the gauge hardware version """
+        if self._send_command("hardware_version"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return int(rdata[0:2]), int(rdata[2:4]), int(rdata[4:])
+        else:
+            self.report_error("Unable to send hardware version command")
+        return None
+
+    def read_serial_number(self) -> Union[str, None]:
+        """ Read the gauge serial number """
+        if self._send_command("serial_number"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return rdata
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send serial number command")
+        return None
+
+    def read_order_number(self) -> Union[str, None]:
+        """ Read the gauge order number """
+        if self._send_command("order_number"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return rdata
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send order number command")
+        return None
+
     def read_pressure(self) -> Union[float, None]:
         """ Read the gauge pressure """
 
@@ -212,16 +288,6 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
                 return float(mantissa * 10 ** (exponent - 20))
         else:
             self.report_error("Unable to send pressure command")
-        return None
-
-    def read_software_version(self) -> tuple[int, int, int] | None:
-        """ Read the gauge software version """
-        if self._send_command("software_version"):
-            rdata = self._read_reply()
-            if rdata is not None:
-                return int(rdata[0:2]), int(rdata[2:4]), int(rdata[4:])
-        else:
-            self.report_error("Unable to send software version command")
         return None
 
     def get_atomic_value(self, item: str ="") -> Union[float, int, str, None]:
@@ -243,7 +309,7 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
             self.report_error("Not connected to Pfeiffer MPT200 pressure sensor")
             return False
 
-        self.software_version = self.read_software_version()
+        self.software_version = self.read_firmware_version()
         # self.last_error_code = pvp.read_error_code(self.serial, self.address)
         if self.last_error_code != 0:
             self.report_error(f"Error code: {self.last_error_code}")
