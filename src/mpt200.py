@@ -1,6 +1,7 @@
 """ Class for Pfeiffer MPT200 pressure sensor """
 from typing import Union
 from enum import Enum
+from math import log10
 
 import serial
 
@@ -25,8 +26,8 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
     """
     # commands that initial control functions
     control_commands = {
-        'on_off': 41,
-        'switching_ranges': 49,
+        'set_on_off': 41,
+        'set_switching_ranges': 49,
         'set_pressure_switch_point1': 730,
         'set_pressure_switch_point2': 732,
         'set_pressure_value': 740,  # only used for calibration
@@ -36,6 +37,8 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
     }
     # commands that request status or data
     status_requests = {
+        'on_off':41,
+        'switching_ranges':49,
         'current_error': 303,
         'firmware_version': 312,
         'device_name': 349,
@@ -204,6 +207,81 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         # Return it
         return data
 
+    def set_sensor_onoff(self, turn_on: bool =True) -> bool:
+        """ Set the on/off of the MPT200 sensor
+
+        :arg turn_on (bool) -  set to True to turn on, False to turn off the MPT200 sensor
+        """
+
+        if turn_on:
+            retval = self._send_command("set_on_off", "1")
+            if not retval:
+                self.report_error("Unable to send set on command to MPT200")
+        else:
+            retval = self._send_command("set_on_off", "0")
+            if not retval:
+                self.report_error("Unable to send set off command to MPT200")
+        return retval
+
+    def get_sensor_onoff(self) -> Union[bool, None]:
+        """ Get the on/off state of the MPT200 sensor """
+        if self._send_command("on_off"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                try:
+                    value = int(rdata)
+                    if value == 0:
+                        self.report_debug("Sensor off")
+                        return False
+                    if value == 1:
+                        self.report_debug("Sensor on")
+                        return True
+                    self.report_error(f"Invalid sensor state: {rdata}")
+                    return None
+                except ValueError:
+                    self.report_error(f"Invalid on_off response: {rdata}")
+            else:
+                self.report_error("No response from MPT200")
+        else:
+            self.report_error("Unable to send on_off command to MPT200")
+        return None
+
+    def set_switching_ranges(self, stype: int =0) -> bool:
+        """ Set the switching range type of the MPT200 sensor
+
+        :arg stype: (int) - 0 for direct switching, 1 for continuous transition
+        """
+        if 0 <= stype <= 1:
+            retval = self._send_command("set_switching_ranges", f"{stype:03d}")
+            if not retval:
+                self.report_error("Unable to send set_switching_ranges command to MPT200")
+        else:
+            self.report_error(f"Invalid switch type (0 or 1): {stype}")
+            retval = False
+        return retval
+
+    def get_switching_ranges(self) -> Union[int, None]:
+        """ Get the switch range type of the MPT200 sensor """
+        if self._send_command("switching_ranges"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                try:
+                    value = int(rdata)
+                    if value == 0:
+                        self.report_debug("switch ranges set to 0: direct switching")
+                    elif value == 1:
+                        self.report_debug("switch ranges set to 1: continuous switching")
+                    else:
+                        self.report_error(f"Invalid switch ranges value: {value}")
+                except ValueError:
+                    self.report_error(f"Invalid switching ranges response: {rdata}")
+                    value = None
+                return value
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send switch ranges command")
+        return None
+
     def read_current_error(self) -> Union[ErrorCode, None]:
         """ Read the current error code """
         if self._send_command("current_error"):
@@ -274,8 +352,27 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
             self.report_error("Unable to send order number command")
         return None
 
-    def read_pressure_switch_points(self, point: int =0) -> Union[float, None]:
-        """ Read the gauge pressure switch points either 1 or 2
+    def set_pressure_switch_point(self, point: int, value: float) -> bool:
+        """ Set the pressure switch point (0 or 1) to a pressure value in hPa """
+        if 1 <= point <= 2:
+            # format value
+            exponent = int(log10(value))
+            mantissa = int((value / 10 ** exponent) * 1000)
+            value_str = f"{mantissa:4d}{(exponent+20):02d}"
+            if point == 1:
+                send_retval = self._send_command("set_pressure_switch_point1", value_str)
+            else:
+                send_retval = self._send_command("set_pressure_switch_point2", value_str)
+            if send_retval:
+                self.report_debug(f"Pressure switch point {point }set to {value}")
+            else:
+                self.report_error(f"Unable to set pressure switch point {point} to {value}")
+            return send_retval
+        self.report_error(f"Invalid pressure switch point (1 or 2): {point}")
+        return False
+
+    def get_pressure_switch_point(self, point: int =0) -> Union[float, None]:
+        """ Read the gauge pressure switch point either 1 or 2
 
          :arg point (int) either 1 or 2"""
 
