@@ -279,31 +279,29 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
 
          :arg point (int) either 1 or 2"""
 
-        # check inputs
-        rdata = None
+        # check point value
         if 1 <= point <= 2:
             if point == 1:
-                if self._send_command("pressure_switch_point1"):
-                    rdata = self._read_reply()
-                    if rdata is None:
-                        self.report_error("No response from MPT200 sensor")
-                else:
-                    self.report_error("Unable to send pressure_switch_point1 command")
+                send_retval = self._send_command("pressure_switch_point1")
             else:
-                if self._send_command("pressure_switch_point2"):
-                    rdata = self._read_reply()
-                    if rdata is None:
-                        self.report_error("No response from MPT200 sensor")
-                else:
-                    self.report_error("Unable to send pressure_switch_point2 command")
-            if rdata is not None:
-                # Convert to a float
-                mantissa = float(rdata[:4]) * 0.001
-                exponent = int(rdata[4:])
-                return float(mantissa * 10 ** (exponent - 20))
+                send_retval = self._send_command("pressure_switch_point2")
+            if send_retval:
+                rdata = self._read_reply()
+                if rdata is not None:
+                    # Convert to a float
+                    try:
+                        mantissa = float(rdata[:4]) * 0.001
+                        exponent = int(rdata[4:])
+                        value = float(mantissa * 10 ** (exponent - 20))
+                    except ValueError:
+                        self.report_error(f"Invalid pressure switch points value: {rdata}")
+                        value = None
+                    return value
+                self.report_error("No response from MPT200 sensor")
+            else:
+                self.report_error(f"Unable to send pressure_switch_point{point} command")
         else:
             self.report_error(f"Invalid pressure switch points value (1 or 2): {point}")
-
         return None
 
     def read_pressure_adjustment_point(self):
@@ -336,6 +334,35 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
                 return float(mantissa * 10 ** (exponent - 20))
         else:
             self.report_error("Unable to send pressure command")
+        return None
+
+    def read_pressure_correction_factor(self, gtype: str = "") -> Union[float, None]:
+        """ Read the gauge pressure correction factor
+
+        :arg gtype (str) - pirani or cold_cathode
+        """
+        # check gauge type
+        if gtype.lower() in ["pirani", "cold_cathode"]:
+            if gtype.lower() == "pirani":
+                send_retval = self._send_command("pressure_correction_factor_pirani")
+            else:
+                send_retval = self._send_command("pressure_correction_factor_cold_cathode")
+            if send_retval:
+                rdata = self._read_reply()
+                if rdata is not None:
+                    try:
+                        value  = float(int(rdata)) * 0.01
+                    except ValueError:
+                        self.report_error(f"Invalid pressure correction factor value: {rdata}")
+                        value = None
+                    return value
+                self.report_error("No response from MPT200 sensor")
+            else:
+                self.report_error(
+                    f"Unable to send pressure_correction_factor_{gtype.lower()} command")
+        else:
+            self.report_error(
+                f"Invalid pressure correction factor type (pirani or cold_cathode): {gtype}")
         return None
 
     def get_atomic_value(self, item: str ="") -> Union[float, int, str, None]:
