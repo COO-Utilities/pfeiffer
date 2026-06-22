@@ -274,6 +274,54 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
             self.report_error("Unable to send order number command")
         return None
 
+    def read_pressure_switch_points(self, point: int =0) -> Union[float, None]:
+        """ Read the gauge pressure switch points either 1 or 2
+
+         :arg point (int) either 1 or 2"""
+
+        # check inputs
+        rdata = None
+        if 1 <= point <= 2:
+            if point == 1:
+                if self._send_command("pressure_switch_point1"):
+                    rdata = self._read_reply()
+                    if rdata is None:
+                        self.report_error("No response from MPT200 sensor")
+                else:
+                    self.report_error("Unable to send pressure_switch_point1 command")
+            else:
+                if self._send_command("pressure_switch_point2"):
+                    rdata = self._read_reply()
+                    if rdata is None:
+                        self.report_error("No response from MPT200 sensor")
+                else:
+                    self.report_error("Unable to send pressure_switch_point2 command")
+            if rdata is not None:
+                # Convert to a float
+                mantissa = float(rdata[:4]) * 0.001
+                exponent = int(rdata[4:])
+                return float(mantissa * 10 ** (exponent - 20))
+        else:
+            self.report_error(f"Invalid pressure switch points value (1 or 2): {point}")
+
+        return None
+
+    def read_pressure_adjustment_point(self):
+        """ Read the gauge pressure adjustment point """
+        if self._send_command("pressure_adjustment_point"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                try:
+                    point = int(rdata)
+                except ValueError:
+                    self.report_error(f"Invalid pressure adjustment point value (0 or 1): {rdata}")
+                    point = None
+                return point
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send pressure_adjustment_point command")
+        return None
+
     def read_pressure(self) -> Union[float, None]:
         """ Read the gauge pressure """
 
