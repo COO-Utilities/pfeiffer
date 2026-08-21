@@ -1,13 +1,21 @@
 """ Class for Pfeiffer MPT200 pressure sensor """
 from typing import Union
+from enum import Enum
+from math import log10
 
 import serial
-import pfeiffer_vacuum_protocol as pvp
 
 try:
     from hardware_device_base import HardwareSensorBase
 except ModuleNotFoundError:
     from hardware_device_base.hardware_sensor_base import HardwareSensorBase  # type: ignore
+
+# Error states for vacuum gauges
+class ErrorCode(Enum):
+    """Class for Pfeiffer vacuum protocol error codes"""
+    NO_ERROR = 0
+    DEFECTIVE_SENSOR = 1
+    DEFECTIVE_MEMORY = 2
 
 
 class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-instance-attributes
@@ -16,21 +24,39 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
     This class provides methods to read the MPT200 pressure sensor
 
     """
-    commands = {
-        'on_off': "041",
-        'switching_ranges': "049",
-        'current_error': "303",
-        'software_version': "312",
-        'device_name': "349",
-        'hardware_version': "354",
-        'serial_number': "355",
-        'order_number': "388",
-        'pressure_switch_point1': "730",
-        'pressure_switch_point2': "732",
-        'pressure_value': "740",
-        'pressure_adjustment_point': "741",
-        'correction_factor_pirani': "742",
-        'correction_factor_cold_cathode': "743"
+    # commands that initial control functions
+    control_commands = {
+        'set_on_off': 41,
+        'set_switching_ranges': 49,
+        'set_pressure_switch_point1': 730,
+        'set_pressure_switch_point2': 732,
+        'set_pressure_value': 740,  # only used for calibration
+        'set_pressure_adjustment_point': 741,
+        'set_correction_factor_pirani': 742,
+        'set_correction_factor_cold_cathode': 743
+    }
+    # commands that request status or data
+    status_requests = {
+        'on_off':41,
+        'switching_ranges':49,
+        'current_error': 303,
+        'firmware_version': 312,
+        'device_name': 349,
+        'hardware_version': 354,
+        'serial_number': 355,
+        'order_number': 388,
+        'pressure_switch_point1': 730,
+        'pressure_switch_point2': 732,
+        'pressure_value': 740,
+        'pressure_adjustment_point': 741,
+        'correction_factor_pirani': 742,
+        'correction_factor_cold_cathode': 743
+    }
+
+    error_codes = {
+        "000000": ErrorCode.NO_ERROR,
+        "Err001": ErrorCode.DEFECTIVE_SENSOR,
+        "Err002": ErrorCode.DEFECTIVE_MEMORY
     }
 
     def __init__(self, log=True, logfile: str = __name__.rsplit(",", 1)[-1],
@@ -53,6 +79,7 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         self.baud = 9600
         self.address = address
         self.serial = None
+        self.last_command_num = 0
 
     def connect(self, port: str ="/dev/ttyS0", baud: int =9600, con_type: str ="serial") -> None:  # pylint: disable=W0221
         """ Connect to Pfeiffer MPT200 pressure sensor """
@@ -90,22 +117,358 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
         except serial.SerialException as ex:
             self.report_error(f"Could not disconnect from Pfeiffer MPT200 sensor: {ex}")
 
-    def _send_command(self, command: str) -> bool:  # pylint: disable=W0221
-        """ send a command to the device """
-        self.report_warning(f"_send_command not implemented: {command}")
+    def _send_command(self, command: str, data_str:str ="") -> bool:  # pylint: disable=W0221
+        """ Send a command to the Pfeiffer MPT200 pressure sensor """
+        if command in self.status_requests:
+            self.last_command_num = self.status_requests[command]
+            cmd = "{:03d}00{:03d}02=?".format(self.address, self.status_requests[command])
+            cmd += "{:03d}\r".format(sum([ord(x) for x in cmd]) % 256)
+            self.report_debug(f"Sending status request command: {cmd}")
+            n_chars = self.serial.write(cmd.encode())
+        elif command in self.control_commands:
+            if data_str is not None:
+                self.last_command_num = self.control_commands[command]
+                cmd = "{:03d}10{:03d}{:02d}{:s}".format(self.address,
+                                                        self.control_commands[command],
+                                                        len(data_str), data_str)
+                cmd += "{:03d}\r".format(sum([ord(x) for x in cmd]) % 256)
+                self.report_debug(f"Sending control command: {cmd}")
+                n_chars = self.serial.write(cmd.encode())
+            else:
+                self.report_error("Control commands require data to be sent")
+                n_chars = 0
+        else:
+            self.report_error(f"Invalid command {command}")
+            n_chars = 0
+        self.report_debug(f"Chars sent: {n_chars}")
+        return n_chars > 0
+
+    def _read_reply(self) -> Union[str, None]: # pylint: disable=too-many-branches
+        """ read the gauge response """
+
+        # Read until newline or we stop getting a response
+        reply = ""
+        for _ in range(64):
+            char = self.serial.read(1)
+
+            if char == b"":
+                break
+
+            try:
+                reply += char.decode("ascii")
+            except UnicodeDecodeError:
+                self.report_warning(f"Invalid character {char}")
+                continue
+
+            if char == b"\r":
+                break
+
+        self.report_debug(f"Reply: {reply}")
+
+        # Check the length
+        if len(reply) < 14:
+            self.report_error(f"gauge response too short to be valid: {reply}")
+            data = None
+
+        # Check it is terminated correctly
+        elif reply[-1] != "\r":
+            self.report_error("gauge response incorrectly terminated")
+            data = None
+
+        # Evaluate the checksum
+        elif int(reply[-4:-1]) != (sum([ord(x) for x in reply[:-4]]) % 256):
+            self.report_error("invalid checksum in gauge response")
+            data = None
+
+        else:
+            # Pull out the response parts
+            addr = int(reply[:3])
+            # readwrite = int(reply[3:4])
+            param_num = int(reply[5:8])
+            data = reply[10:-4]
+
+            # Check for errors
+            if data == "NO_DEF":
+                self.report_error("undefined parameter number")
+            if data == "_RANGE":
+                self.report_error("data is out of range")
+            if data == "_LOGIC":
+                self.report_error("logic access violation")
+
+            # Confirm reply
+            if int(addr) != self.address:
+                self.report_error(f"invalid address {addr}")
+                data = None
+            if int(param_num) != self.last_command_num:
+                self.report_error(f"Reply command {param_num} does not match "
+                                  f"command sent: {self.last_command_num}")
+                data = None
+
+        # Return it
+        return data
+
+    def set_sensor_onoff(self, turn_on: bool =True) -> bool:
+        """ Set the on/off of the MPT200 sensor
+
+        :arg turn_on (bool) -  set to True to turn on, False to turn off the MPT200 sensor
+        """
+
+        if turn_on:
+            retval = self._send_command("set_on_off", "1")
+            if not retval:
+                self.report_error("Unable to send set on command to MPT200")
+        else:
+            retval = self._send_command("set_on_off", "0")
+            if not retval:
+                self.report_error("Unable to send set off command to MPT200")
+        return retval
+
+    def get_sensor_onoff(self) -> Union[bool, None]:
+        """ Get the on/off state of the MPT200 sensor """
+        if self._send_command("on_off"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                try:
+                    value = int(rdata)
+                    if value == 0:
+                        self.report_debug("Sensor off")
+                        return False
+                    if value == 1:
+                        self.report_debug("Sensor on")
+                        return True
+                    self.report_error(f"Invalid sensor state: {rdata}")
+                    return None
+                except ValueError:
+                    self.report_error(f"Invalid on_off response: {rdata}")
+            else:
+                self.report_error("No response from MPT200")
+        else:
+            self.report_error("Unable to send on_off command to MPT200")
+        return None
+
+    def set_switching_ranges(self, stype: int =0) -> bool:
+        """ Set the switching range type of the MPT200 sensor
+
+        :arg stype: (int) - 0 for direct switching, 1 for continuous transition
+        """
+        if 0 <= stype <= 1:
+            retval = self._send_command("set_switching_ranges", f"{stype:03d}")
+            if not retval:
+                self.report_error("Unable to send set_switching_ranges command to MPT200")
+        else:
+            self.report_error(f"Invalid switch type (0 or 1): {stype}")
+            retval = False
+        return retval
+
+    def get_switching_ranges(self) -> Union[int, None]:
+        """ Get the switch range type of the MPT200 sensor """
+        if self._send_command("switching_ranges"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                try:
+                    value = int(rdata)
+                    if value == 0:
+                        self.report_debug("switch ranges set to 0: direct switching")
+                    elif value == 1:
+                        self.report_debug("switch ranges set to 1: continuous switching")
+                    else:
+                        self.report_error(f"Invalid switch ranges value: {value}")
+                except ValueError:
+                    self.report_error(f"Invalid switching ranges response: {rdata}")
+                    value = None
+                return value
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send switch ranges command")
+        return None
+
+    def read_current_error(self) -> Union[ErrorCode, None]:
+        """ Read the current error code """
+        if self._send_command("current_error"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                if rdata in self.error_codes:
+                    self.last_error_code = self.error_codes[rdata]
+                    return self.error_codes[rdata]
+
+                self.report_error(f"Unknown error code {rdata}")
+                return None
+
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send error command")
+        return None
+
+    def read_firmware_version(self) -> tuple[int, int, int] | None:
+        """ Read the gauge firmware version """
+        if self._send_command("firmware_version"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return int(rdata[0:2]), int(rdata[2:4]), int(rdata[4:])
+        else:
+            self.report_error("Unable to send firmware version command")
+        return None
+
+    def read_device_name(self) -> Union[str, None]:
+        """ Read the gauge device name """
+        if self._send_command("device_name"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return rdata
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send device name command")
+        return None
+
+    def read_hardware_version(self) -> tuple[int, int, int] | None:
+        """ Read the gauge hardware version """
+        if self._send_command("hardware_version"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return int(rdata[0:2]), int(rdata[2:4]), int(rdata[4:])
+        else:
+            self.report_error("Unable to send hardware version command")
+        return None
+
+    def read_serial_number(self) -> Union[str, None]:
+        """ Read the gauge serial number """
+        if self._send_command("serial_number"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return rdata
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send serial number command")
+        return None
+
+    def read_order_number(self) -> Union[str, None]:
+        """ Read the gauge order number """
+        if self._send_command("order_number"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                return rdata
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send order number command")
+        return None
+
+    def set_pressure_switch_point(self, point: int, value: float) -> bool:
+        """ Set the pressure switch point (0 or 1) to a pressure value in hPa """
+        if 1 <= point <= 2:
+            # format value
+            exponent = int(log10(value))
+            mantissa = int((value / 10 ** exponent) * 1000)
+            value_str = f"{mantissa:4d}{(exponent+20):02d}"
+            if point == 1:
+                send_retval = self._send_command("set_pressure_switch_point1", value_str)
+            else:
+                send_retval = self._send_command("set_pressure_switch_point2", value_str)
+            if send_retval:
+                self.report_debug(f"Pressure switch point {point }set to {value}")
+            else:
+                self.report_error(f"Unable to set pressure switch point {point} to {value}")
+            return send_retval
+        self.report_error(f"Invalid pressure switch point (1 or 2): {point}")
         return False
 
-    def _read_reply(self) -> Union[str, None]:
-        """ read a reply from the device """
-        self.report_warning("_read_reply not implemented")
+    def get_pressure_switch_point(self, point: int =0) -> Union[float, None]:
+        """ Read the gauge pressure switch point either 1 or 2
+
+         :arg point (int) either 1 or 2"""
+
+        # check point value
+        if 1 <= point <= 2:
+            if point == 1:
+                send_retval = self._send_command("pressure_switch_point1")
+            else:
+                send_retval = self._send_command("pressure_switch_point2")
+            if send_retval:
+                rdata = self._read_reply()
+                if rdata is not None:
+                    # Convert to a float
+                    try:
+                        mantissa = float(rdata[:4]) * 0.001
+                        exponent = int(rdata[4:])
+                        value = float(mantissa * 10 ** (exponent - 20))
+                    except ValueError:
+                        self.report_error(f"Invalid pressure switch points value: {rdata}")
+                        value = None
+                    return value
+                self.report_error("No response from MPT200 sensor")
+            else:
+                self.report_error(f"Unable to send pressure_switch_point{point} command")
+        else:
+            self.report_error(f"Invalid pressure switch points value (1 or 2): {point}")
+        return None
+
+    def read_pressure_adjustment_point(self):
+        """ Read the gauge pressure adjustment point """
+        if self._send_command("pressure_adjustment_point"):
+            rdata = self._read_reply()
+            if rdata is not None:
+                try:
+                    point = int(rdata)
+                except ValueError:
+                    self.report_error(f"Invalid pressure adjustment point value (0 or 1): {rdata}")
+                    point = None
+                return point
+            self.report_error("No response from MPT200 sensor")
+        else:
+            self.report_error("Unable to send pressure_adjustment_point command")
+        return None
+
+    def read_pressure(self) -> Union[float, None]:
+        """ Read the gauge pressure """
+
+        if self._send_command("pressure_value"):
+
+            rdata = self._read_reply()
+
+            if rdata is not None:
+                # Convert to a float
+                mantissa = float(rdata[:4]) * 0.001
+                exponent = int(rdata[4:])
+                return float(mantissa * 10 ** (exponent - 20))
+        else:
+            self.report_error("Unable to send pressure command")
+        return None
+
+    def read_pressure_correction_factor(self, gtype: str = "") -> Union[float, None]:
+        """ Read the gauge pressure correction factor
+
+        :arg gtype (str) - pirani or cold_cathode
+        """
+        # check gauge type
+        if gtype.lower() in ["pirani", "cold_cathode"]:
+            if gtype.lower() == "pirani":
+                send_retval = self._send_command("pressure_correction_factor_pirani")
+            else:
+                send_retval = self._send_command("pressure_correction_factor_cold_cathode")
+            if send_retval:
+                rdata = self._read_reply()
+                if rdata is not None:
+                    try:
+                        value  = float(int(rdata)) * 0.01
+                    except ValueError:
+                        self.report_error(f"Invalid pressure correction factor value: {rdata}")
+                        value = None
+                    return value
+                self.report_error("No response from MPT200 sensor")
+            else:
+                self.report_error(
+                    f"Unable to send pressure_correction_factor_{gtype.lower()} command")
+        else:
+            self.report_error(
+                f"Invalid pressure correction factor type (pirani or cold_cathode): {gtype}")
+        return None
 
     def get_atomic_value(self, item: str ="") -> Union[float, int, str, None]:
         """ get a value from the device """
         if self.is_connected():
             if item == "pressure":
-                value = pvp.read_pressure(self.serial, self.address)
-            elif item == "error":
-                value = pvp.read_error_code(self.serial, self.address)
+                value = self.read_pressure()
+            # elif item == "error":
+            #    value = self.read_error_code(self.serial, self.address)
             else:
                 value = None
             return value
@@ -118,8 +481,8 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
             self.report_error("Not connected to Pfeiffer MPT200 pressure sensor")
             return False
 
-        self.software_version = pvp.read_software_version(self.serial, self.address)
-        self.last_error_code = pvp.read_error_code(self.serial, self.address)
+        self.software_version = self.read_firmware_version()
+        # self.last_error_code = pvp.read_error_code(self.serial, self.address)
         if self.last_error_code != 0:
             self.report_error(f"Error code: {self.last_error_code}")
         # self.gauge_type = pvp.read_gauge_type(self.serial, self.address)
