@@ -36,12 +36,16 @@ Repository = "https://github.com/COO-Utils/pfeiffer"
 [project.scripts]
 # Defines command-line scripts for your package. Replace with your script and function.
 # your-command = "your_module:your_function"
+pfeiffer = "src.mpt200:main"
 
 [project.optional-dependencies]
 # Optional dependencies that can be installed with extra tags, like "dev".
 dev = [
   "pytest"
 ]
+[tool.setuptools]
+packages = ["src"]
+
 [tool.pytest.ini_options]
   pythonpath = [
       "."
