@@ -1,4 +1,6 @@
 """ Class for Pfeiffer MPT200 pressure sensor """
+import argparse
+import sys
 from typing import Union
 from enum import Enum
 from math import log10
@@ -489,3 +491,78 @@ class MPT200PressureSensor(HardwareSensorBase):  # pylint: disable=too-many-inst
 
         self.initialized = True
         return True
+
+# pylint: disable=too-many-branches
+def main():
+    """CLI for the Lihan TC4382 Cryocooler device."""
+
+    parser = argparse.ArgumentParser(
+        description="Pfeiffer MPT 200 CLI.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+    Examples:
+        pfeiffer get pressure
+        pfeiffer set on
+        """)
+
+    parser.add_argument("action", choices=["get", "set"],
+                        help="Action to perform")
+    parser.add_argument("param", nargs='?',
+                        help="Parameter (e.g., 'pressure' for get, or 'on' for set)")
+    parser.add_argument("--port", type=str, default="/dev/ttyS0",
+                        help="MPT200 serial port (e.g. /dev/ttyS0)")
+    parser.add_argument("--baud", type=int, default=9600, help="Baud rate (default: 9600)")
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
+    args = parser.parse_args()
+
+    pfeiffer = MPT200PressureSensor(log=False)
+    # pylint: disable=too-many-nested-blocks
+    try:
+        pfeiffer.connect(args.port, args.baud)
+
+        if args.action == "get":
+            if not args.param:
+                print("Error: 'get' requires a parameter.")
+            else:
+                if 'pressure' in args.param:
+                    result = pfeiffer.get_atomic_value(args.param)
+                    if result is not None:
+                        ptorr = float(result) * 750.062
+                        print(f"Pressure: {result} hPa, {ptorr} mTorr")
+                    else:
+                        print("Error: 'get' returned a null value.")
+                elif 'error' in args.param:
+                    result = pfeiffer.read_current_error()
+                    if result is not None:
+                        print(f"Current error: {result}")
+                    else:
+                        print("Error: 'get' returned a null value.")
+                else:
+                    print("Unknown parameter (must be 'pressure' or 'error')")
+        elif args.action == "set":
+            if not args.param:
+                print("Error: 'set' requires a state value (e.g., set on or set off).")
+            else:
+                if 'on' in args.param:
+                    result = pfeiffer.set_sensor_onoff(True)
+                    print(f"Setting on: [{result}]")
+                elif 'off' in args.param:
+                    result = pfeiffer.set_sensor_onoff(False)
+                    print(f"Setting off: [{result}]")
+                else:
+                    print("Unknown state (must be 'on' or 'off')")
+        else:
+            print("Unknown action (must be 'get' or 'set')")
+    # pylint: disable=broad-except
+    except Exception as ex:
+        print(f"Pfeiffer gauge error: {ex}")
+    finally:
+        if pfeiffer.is_connected():
+            pfeiffer.disconnect()
+
+if __name__ == "__main__":
+    main()
