@@ -501,6 +501,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
     Examples:
+        pfeiffer get help
         pfeiffer get pressure
         pfeiffer set on
         """)
@@ -541,8 +542,13 @@ def main():
                         print(f"Current error: {result}")
                     else:
                         print("Error: 'get' returned a null value.")
+                elif 'help' in args.param:
+                    print("Available commands:")
+                    print("pfeiffer get help")
+                    print("pfeiffer get pressure\npfeiffer get error")
+                    print("pfeiffer set on\npfeiffer set off")
                 else:
-                    print("Unknown parameter (must be 'pressure' or 'error')")
+                    print("Unknown parameter (must be 'help', 'pressure' or 'error')")
         elif args.action == "set":
             if not args.param:
                 print("Error: 'set' requires a state value (e.g., set on or set off).")
